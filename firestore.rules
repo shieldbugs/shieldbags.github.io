@@ -1,9 +1,10 @@
 rules_version = '2';
 
-// Assumed data model
-// products/{productId}: public product catalog fields written only by admins.
-// admins/{uid}: role == "admin"; project owner bootstraps this document in Console.
-// No customer/order documents are stored in Firestore by this storefront.
+// Assumed data model:
+// products/{productId}: public product catalog fields, written only by admins.
+// admins/{uid}: role == "admin"; the project owner bootstraps the first document.
+// siteSettings/storefront: public text/theme settings, written only by admins.
+// Customer orders and private customer data are not stored in Firestore here.
 service cloud.firestore {
   match /databases/{database}/documents {
     function isAuthenticated() {
@@ -64,6 +65,28 @@ service cloud.firestore {
         && (!('images' in data) || validImageList(data.images));
     }
 
+    function validSiteColor(colors, key) {
+      return colors[key] is string
+        && colors[key].matches('^#[A-Fa-f0-9]{6}$');
+    }
+
+    function validSiteSettings(data) {
+      return data.keys().hasOnly(['textsJson', 'colors'])
+        && data.keys().hasAll(['textsJson', 'colors'])
+        && data.textsJson is string
+        && data.textsJson.size() <= 100000
+        && data.colors is map
+        && data.colors.keys().hasOnly(['accent', 'primary', 'background', 'surface', 'text', 'muted', 'border'])
+        && data.colors.keys().hasAll(['accent', 'primary', 'background', 'surface', 'text', 'muted', 'border'])
+        && validSiteColor(data.colors, 'accent')
+        && validSiteColor(data.colors, 'primary')
+        && validSiteColor(data.colors, 'background')
+        && validSiteColor(data.colors, 'surface')
+        && validSiteColor(data.colors, 'text')
+        && validSiteColor(data.colors, 'muted')
+        && validSiteColor(data.colors, 'border');
+    }
+
     match /products/{productId} {
       // Product listings are public so visitors can browse the storefront.
       allow read: if true;
@@ -79,6 +102,21 @@ service cloud.firestore {
       // Bootstrap the first admin document manually in Firebase Console.
       // Afterwards, only an existing admin can manage admin markers.
       allow create, update, delete: if isAdmin();
+    }
+
+    match /siteSettings/{settingId} {
+      // The published storefront needs its public copy and colors.
+      allow get: if settingId == 'storefront';
+      allow list: if false;
+      allow create: if settingId == 'storefront'
+        && isAdmin()
+        && uidUnchanged()
+        && validSiteSettings(request.resource.data);
+      allow update: if settingId == 'storefront'
+        && isAdmin()
+        && uidNotModified()
+        && validSiteSettings(request.resource.data);
+      allow delete: if settingId == 'storefront' && isAdmin();
     }
 
     // Default deny for all other Firestore paths.
