@@ -49,6 +49,12 @@
 npx firebase-tools deploy --only firestore:rules --project matrix-database-b13f3
 ```
 
+لو مش بتستخدم سطر الأوامر، تقدر تنشر القواعد من لوحة Firebase:
+
+1. افتح صفحة **Firestore Database → Rules (قواعد قاعدة البيانات)** في مشروع `matrix-database-b13f3`.
+2. افتح [نسخة القواعد المنشورة في المستودع](https://raw.githubusercontent.com/shieldbugs/shieldbags.github.io/main/firestore.rules) وانسخ الملف كله.
+3. الصقه في محرر **Rules (القواعد)** واضغط **Publish (نشر)**.
+
 عند ظهور رسالة أن Firebase رفض الحفظ، تأكد من نشر ملف `firestore.rules` الموجود في المستودع المنشور، ثم حدّث الصفحة.
 
 ## حدود الصلاحيات
