@@ -32,6 +32,12 @@ function productDocument(product) {
   );
 }
 
+function hasStoreAdminMarker(marker) {
+  if (!marker.exists()) return false;
+  const data = marker.data();
+  return data.role === "admin" || data.enabled === true;
+}
+
 function firebaseMessage(error) {
   const code = error?.code || "";
   if (code === "auth/invalid-email" || code === "auth/missing-email") {
@@ -101,7 +107,7 @@ onAuthStateChanged(auth, async (user) => {
 
   try {
     const marker = await getDoc(doc(db, "admins", user.uid));
-    if (marker.exists() && marker.data().role === "admin") {
+    if (hasStoreAdminMarker(marker)) {
       currentAdmin = user;
       window.shieldAuthState?.(user);
       return;
@@ -129,7 +135,7 @@ window.shieldAdminLogin = async (email, password) => {
       throw new Error(firebaseMessage(error));
     }
 
-    if (!marker.exists() || marker.data().role !== "admin") {
+    if (!hasStoreAdminMarker(marker)) {
       await signOut(auth);
       throw new Error("البريد وكلمة المرور صحيحان، لكن هذا الحساب غير مسجل كأدمن للموقع. راجع مستند admins ورقم UID في Firestore.");
     }

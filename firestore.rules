@@ -1,18 +1,38 @@
 rules_version = '2';
 
-// Assumed data model:
-// products/{productId}: public product catalog fields, written only by admins.
-// admins/{uid}: role == "admin"; the project owner bootstraps the first document.
-// siteSettings/storefront: public text/theme settings, written only by admins.
-// Customer orders and private customer data are not stored in Firestore here.
+// Existing Firebase app data retained from the current project rules:
+// analytics_login_events/{eventId}: create by matching signed-in UID; read by legacy admins.
+// analytics_search_events/{eventId}: signed-in or anonymous create; read by legacy admins.
+// admins/{uid}: owner-readable admin marker; writes remain disabled from clients.
+// games/{gameId}: public read; writes by legacy admins only.
+// users/{uid} and users/{uid}/gameSaves/{gameId}: owner-only read/write.
+// usernames/{username}: public read; owner create; immutable after creation.
+// Storefront additions:
+// products/{productId}: public catalog, validated writes by storefront admins.
+// siteSettings/storefront: public text/theme, validated writes by storefront admins.
 service cloud.firestore {
   match /databases/{database}/documents {
-    function isAuthenticated() {
+    function signedIn() {
       return request.auth != null;
     }
 
+    // Keep the original admin definition for the other apps that use this project.
+    function isAdmin() {
+      return signedIn()
+        && exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+        && get(/databases/$(database)/documents/admins/$(request.auth.uid)).data.enabled == true;
+    }
+
+    // The storefront also accepts the role marker that was created for its web admin.
+    function isStoreAdmin() {
+      return signedIn()
+        && exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+        && (get(/databases/$(database)/documents/admins/$(request.auth.uid)).data.get('enabled', false) == true
+          || get(/databases/$(database)/documents/admins/$(request.auth.uid)).data.get('role', '') == 'admin');
+    }
+
     function isOwner(userId) {
-      return isAuthenticated() && request.auth.uid == userId;
+      return signedIn() && request.auth.uid == userId;
     }
 
     function uidUnchanged() {
@@ -23,12 +43,6 @@ service cloud.firestore {
     function uidNotModified() {
       return !('uid' in request.resource.data)
         || request.resource.data.uid == resource.data.uid;
-    }
-
-    function isAdmin() {
-      return isAuthenticated()
-        && exists(/databases/$(database)/documents/admins/$(request.auth.uid))
-        && get(/databases/$(database)/documents/admins/$(request.auth.uid)).data.role == 'admin';
     }
 
     function safeImage(value) {
@@ -87,39 +101,74 @@ service cloud.firestore {
         && validSiteColor(data.colors, 'border');
     }
 
-    match /products/{productId} {
-      // Product listings are public so visitors can browse the storefront.
-      allow read: if true;
-      allow create: if isAdmin() && uidUnchanged() && validProduct(request.resource.data);
-      allow update: if isAdmin() && uidNotModified() && validProduct(request.resource.data);
-      allow delete: if isAdmin();
+    // Existing analytics behavior.
+    match /analytics_login_events/{eventId} {
+      allow create: if signedIn()
+        && request.resource.data.uid == request.auth.uid;
+      allow read: if isAdmin();
+      allow update, delete: if false;
     }
 
+    match /analytics_search_events/{eventId} {
+      allow create: if (signedIn() && request.resource.data.uid == request.auth.uid)
+        || (!signedIn() && request.resource.data.uid == null);
+      allow read: if isAdmin();
+      allow update, delete: if false;
+    }
+
+    // Existing admin marker behavior: self-read only, no client-side writes.
     match /admins/{uid} {
-      // A signed-in account can check only its own admin marker.
-      allow get: if isOwner(uid) || isAdmin();
-      allow list: if isAdmin();
-      // Bootstrap the first admin document manually in Firebase Console.
-      // Afterwards, only an existing admin can manage admin markers.
+      allow read: if signedIn() && request.auth.uid == uid;
+      allow write: if false;
+    }
+
+    // Existing game catalog behavior.
+    match /games/{gameId} {
+      allow read: if true;
       allow create, update, delete: if isAdmin();
     }
 
+    // Existing player profile and game-save behavior.
+    match /users/{uid} {
+      allow read, write: if signedIn() && request.auth.uid == uid;
+
+      match /gameSaves/{gameId} {
+        allow read, write: if signedIn() && request.auth.uid == uid;
+      }
+    }
+
+    // Existing username lookup behavior.
+    match /usernames/{username} {
+      allow read: if true;
+      allow create: if signedIn()
+        && request.resource.data.uid == request.auth.uid;
+      allow update, delete: if false;
+    }
+
+    // Shield Bags storefront: public product catalog, writes only by storefront admins.
+    match /products/{productId} {
+      allow read: if true;
+      allow create: if isStoreAdmin() && uidUnchanged() && validProduct(request.resource.data);
+      allow update: if isStoreAdmin() && uidNotModified() && validProduct(request.resource.data);
+      allow delete: if isStoreAdmin();
+    }
+
+    // Public storefront copy/theme; only this exact document is readable by visitors.
     match /siteSettings/{settingId} {
-      // The published storefront needs its public copy and colors.
       allow get: if settingId == 'storefront';
       allow list: if false;
       allow create: if settingId == 'storefront'
-        && isAdmin()
+        && isStoreAdmin()
         && uidUnchanged()
         && validSiteSettings(request.resource.data);
       allow update: if settingId == 'storefront'
-        && isAdmin()
+        && isStoreAdmin()
         && uidNotModified()
         && validSiteSettings(request.resource.data);
-      allow delete: if settingId == 'storefront' && isAdmin();
+      allow delete: if settingId == 'storefront' && isStoreAdmin();
     }
 
-    // Default deny for all other Firestore paths.
+    // Deny all paths not explicitly listed above.
     match /{document=**} {
       allow read, write: if false;
     }
